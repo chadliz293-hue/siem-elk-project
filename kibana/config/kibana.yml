@@ -1,0 +1,4 @@
+server.host: "0.0.0.0"
+elasticsearch.hosts: ["http://elasticsearch:9200"]
+xpack.security.enabled: false
+xpack.encryptedSavedObjects.encryptionKey: "4583fe1374fb5a1a6f76c922a47296f6"

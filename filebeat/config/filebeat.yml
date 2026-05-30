@@ -1,0 +1,37 @@
+filebeat.inputs:
+  # Logs système Linux
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/syslog
+      - /var/log/auth.log
+    fields:
+      log_type: system
+
+  # Logs Docker — avec exclusion des conteneurs ELK
+  - type: container
+    enabled: true
+    paths:
+      - '/var/lib/docker/containers/*/*.log'
+    processors:
+      - drop_event:
+          when:
+            or:
+              - contains:
+                  container.name: "elasticsearch"
+              - contains:
+                  container.name: "logstash"
+              - contains:
+                  container.name: "kibana"
+              - contains:
+                  container.name: "filebeat"
+
+# Sortie vers Logstash avec TLS
+output.logstash:
+  hosts: ["logstash:5044"]
+  ssl.enabled: true
+  ssl.certificate_authorities: ["/usr/share/filebeat/certs/ca.crt"]
+
+# Configuration générale
+logging.level: info
+logging.to_files: true

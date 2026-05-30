@@ -1,0 +1,10 @@
+[req]
+req_extensions = v3_req
+distinguished_name = req_distinguished_name
+[req_distinguished_name]
+[v3_req]
+subjectAltName = @alt_names
+[alt_names]
+IP.1 = 172.18.220.6
+IP.2 = 172.18.208.1
+DNS.1 = logstash

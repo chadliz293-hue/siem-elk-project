@@ -1,0 +1,204 @@
+services:
+  # ========================================
+  # ELASTICSEARCH - Moteur de recherche
+  # ========================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    volumes:
+      - ./elasticsearch/data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - elk-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ========================================
+  # LOGSTASH - Pipeline de traitement
+  # ========================================
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./certs:/usr/share/logstash/certs:ro
+    ports:
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "5044:5044"
+      - "9600:9600"
+    environment:
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+    networks:
+      - elk-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # ========================================
+  # KIBANA - Interface de visualisation
+  # ========================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+      - xpack.securitySolution.enabled=true
+      - xpack.encryptedSavedObjects.encryptionKey=4583fe1374fb5a1a6f76c922a47296f6
+    volumes:
+      - ./kibana/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    networks:
+      - elk-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ========================================
+  # FILEBEAT - Agent de collecte
+  # ========================================
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - ./filebeat/config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./certs:/usr/share/filebeat/certs:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: filebeat -e -strict.perms=false
+    networks:
+      - elk-network
+    depends_on:
+      - elasticsearch
+      - logstash
+
+  # ========================================
+  # SHUFFLE - SOAR
+  # ========================================
+  shuffle-database:
+    image: opensearchproject/opensearch:2.10.0
+    container_name: shuffle-database
+    hostname: shuffle-database
+    ports:
+      - "9201:9200"
+    environment:
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - discovery.type=single-node
+    volumes:
+      - ./shuffle/db:/usr/share/opensearch/data
+    networks:
+      - elk-network
+
+  shuffle-backend:
+    image: ghcr.io/shuffle/shuffle-backend:latest
+    container_name: shuffle-backend
+    hostname: shuffle-backend
+    ports:
+      - "5001:5001"
+    environment:
+      - DATASTORE_EMULATOR_HOST=shuffle-database:9200
+      - SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
+      - SHUFFLE_FILE_LOCATION=/shuffle-files
+      - ORG_ID=Shuffle
+      - SHUFFLE_APP_DOWNLOAD_LOCATION=https://github.com/Shuffle/python-apps
+      - SHUFFLE_OPENSEARCH_URL=http://shuffle-database:9200
+      - SHUFFLE_OPENSEARCH_USERNAME=admin
+      - SHUFFLE_OPENSEARCH_PASSWORD=admin
+    volumes:
+      - ./shuffle/apps:/shuffle-apps
+      - ./shuffle/files:/shuffle-files
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - elk-network
+    depends_on:
+      - shuffle-database
+
+  shuffle-frontend:
+    image: ghcr.io/shuffle/shuffle-frontend:latest
+    container_name: shuffle-frontend
+    hostname: shuffle-frontend
+    ports:
+      - "3001:80"
+      - "3443:443"
+    environment:
+      - BACKEND_HOSTNAME=shuffle-backend
+    networks:
+      - elk-network
+    depends_on:
+      - shuffle-backend
+
+  shuffle-orborus:
+    image: ghcr.io/shuffle/shuffle-orborus:latest
+    container_name: shuffle-orborus
+    hostname: shuffle-orborus
+    environment:
+      - SHUFFLE_APP_SDK_VERSION=1.1.0
+      - SHUFFLE_WORKER_VERSION=latest
+      - ORG_ID=Shuffle
+      - ENVIRONMENT_NAME=Shuffle
+      - BASE_URL=http://shuffle-backend:5001
+      - DOCKER_API_VERSION=1.44
+      - SHUFFLE_BASE_IMAGE_NAME=shuffle
+      - SHUFFLE_BASE_IMAGE_REGISTRY=ghcr.io
+      - SHUFFLE_BASE_IMAGE_TAG_SUFFIX="-1.0.0"
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - SHUFFLE_PASS_WORKER_PROXY=False
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - elk-network
+    depends_on:
+      - shuffle-backend
+
+  # ========================================
+  # THEHIVE - Gestion des incidents
+  # ========================================
+  thehive:
+    image: strangebee/thehive:5.2
+    container_name: thehive
+    depends_on:
+      - elasticsearch
+    ports:
+      - "9000:9000"
+    environment:
+      - JVM_OPTS=-Xms512m -Xmx1g
+    volumes:
+      - ./thehive/db:/data/db
+      - ./thehive/index:/data/index
+      - ./thehive/files:/data/files
+    networks:
+      - elk-network
+    restart: unless-stopped
+
+networks:
+  elk-network:
+    driver: bridge
+
+volumes:
+  elasticsearch-data:
+    driver: local

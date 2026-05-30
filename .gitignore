@@ -1,0 +1,21 @@
+# Data directories
+thehive/db/
+thehive/index/
+thehive/files/
+shuffle/db/
+elasticsearch/data/
+logstash/data/
+
+# Logs
+*.log
+logs/
+
+# Certificates
+certs/
+*.p12
+*.pem
+*.crt
+*.key
+thehive/db/
+shuffle/db/
+elasticsearch/data/
